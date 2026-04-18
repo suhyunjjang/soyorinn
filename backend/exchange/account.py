@@ -1,14 +1,18 @@
 """
-바이낸스 선물 계정 정보 조회 모듈 (인증 필요)
+바이낸스 선물 계정 정보 조회 + 주문 모듈 (인증 필요)
 
 - 지갑 잔고 (USDT)
 - 보유 포지션
 - 진행 중인 주문 (오픈 오더)
+- 마진 모드 / 레버리지 설정
+- 시장가 매수, TP 주문, 주문 취소
 """
 
 import logging
+import math
 import os
 from binance.client import Client
+from binance.exceptions import BinanceAPIException
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -136,3 +140,143 @@ def get_open_orders() -> list[dict]:
         }
         for o in orders
     ]
+
+
+# ----------------------------------------------------------------------------
+# 주문 / 설정 함수 (전략 엔진에서 사용)
+# ----------------------------------------------------------------------------
+
+
+# 심볼별 거래 규칙 캐시 (stepSize, tickSize, minQty)
+_symbol_filters: dict[str, dict] = {}
+
+
+def get_symbol_filters(symbol: str) -> dict:
+    """
+    심볼의 거래 규칙 조회 (stepSize, tickSize, minQty).
+    한 번 조회 후 메모리 캐시.
+    """
+    symbol = symbol.upper()
+    if symbol in _symbol_filters:
+        return _symbol_filters[symbol]
+
+    client = get_client()
+    info = client.futures_exchange_info()
+    target = next((s for s in info["symbols"] if s["symbol"] == symbol), None)
+    if not target:
+        raise RuntimeError(f"심볼 정보를 찾을 수 없음: {symbol}")
+
+    lot = next(f for f in target["filters"] if f["filterType"] == "LOT_SIZE")
+    price = next(f for f in target["filters"] if f["filterType"] == "PRICE_FILTER")
+
+    _symbol_filters[symbol] = {
+        "step_size": float(lot["stepSize"]),
+        "min_qty": float(lot["minQty"]),
+        "tick_size": float(price["tickSize"]),
+        "quantity_precision": int(target["quantityPrecision"]),
+        "price_precision": int(target["pricePrecision"]),
+    }
+    return _symbol_filters[symbol]
+
+
+def _quantize_down(value: float, step: float, precision: int) -> float:
+    """value를 step 단위로 내림 + 부동소수 오차 방지"""
+    q = math.floor(value / step) * step
+    return round(q, precision)
+
+
+def get_mark_price(symbol: str) -> float:
+    """심볼의 현재 마크 가격 조회"""
+    client = get_client()
+    data = client.futures_mark_price(symbol=symbol.upper())
+    return float(data["markPrice"])
+
+
+def get_position(symbol: str) -> dict | None:
+    """단일 심볼의 보유 포지션 조회 (없으면 None)"""
+    symbol = symbol.upper()
+    for p in get_positions():
+        if p["symbol"] == symbol:
+            return p
+    return None
+
+
+def set_margin_mode(symbol: str, mode: str = "ISOLATED"):
+    """
+    마진 모드 설정 (ISOLATED / CROSSED).
+    이미 같은 모드면 -4046 에러가 나지만 무시한다.
+    """
+    client = get_client()
+    try:
+        client.futures_change_margin_type(symbol=symbol.upper(), marginType=mode)
+        logger.info(f"[마진 모드] {symbol} → {mode}")
+    except BinanceAPIException as e:
+        if e.code == -4046:  # No need to change margin type
+            return
+        raise
+
+
+def set_leverage(symbol: str, leverage: int):
+    """레버리지 설정"""
+    client = get_client()
+    client.futures_change_leverage(symbol=symbol.upper(), leverage=int(leverage))
+    logger.info(f"[레버리지] {symbol} → {leverage}배")
+
+
+def market_buy(symbol: str, quantity: float) -> dict:
+    """
+    시장가 매수 (LONG 진입).
+
+    Returns: 바이낸스 응답 dict
+    """
+    client = get_client()
+    filters = get_symbol_filters(symbol)
+    qty = _quantize_down(quantity, filters["step_size"], filters["quantity_precision"])
+    if qty < filters["min_qty"]:
+        raise ValueError(
+            f"수량 {qty}이 minQty {filters['min_qty']}보다 작음 (자본/레버리지 부족)"
+        )
+
+    logger.info(f"[시장가 매수] {symbol} qty={qty}")
+    return client.futures_create_order(
+        symbol=symbol.upper(),
+        side="BUY",
+        type="MARKET",
+        quantity=qty,
+    )
+
+
+def place_take_profit_long(symbol: str, quantity: float, stop_price: float) -> dict:
+    """
+    LONG 포지션용 TAKE_PROFIT_MARKET 주문 (reduceOnly).
+    가격이 stop_price에 닿으면 시장가로 청산.
+    """
+    client = get_client()
+    filters = get_symbol_filters(symbol)
+    qty = _quantize_down(quantity, filters["step_size"], filters["quantity_precision"])
+    sp = _quantize_down(stop_price, filters["tick_size"], filters["price_precision"])
+
+    logger.info(f"[TP 주문] {symbol} qty={qty} stop={sp}")
+    return client.futures_create_order(
+        symbol=symbol.upper(),
+        side="SELL",
+        type="TAKE_PROFIT_MARKET",
+        quantity=qty,
+        stopPrice=sp,
+        reduceOnly=True,
+        workingType="MARK_PRICE",
+    )
+
+
+def cancel_order(symbol: str, order_id: int) -> dict | None:
+    """
+    주문 취소. 이미 체결/취소된 주문이면 (-2011) None 반환.
+    """
+    client = get_client()
+    try:
+        return client.futures_cancel_order(symbol=symbol.upper(), orderId=order_id)
+    except BinanceAPIException as e:
+        if e.code == -2011:  # Unknown order / already gone
+            logger.info(f"[취소 무시] {symbol} order_id={order_id} 이미 없음")
+            return None
+        raise

@@ -9,6 +9,7 @@
 import asyncio
 import json
 import logging
+from typing import Awaitable, Callable
 import httpx
 import websockets
 from fastapi import WebSocket
@@ -18,6 +19,7 @@ from exchange.indicators import calculate_rsi
 logger = logging.getLogger(__name__)
 
 StreamKey = tuple[str, str]  # (symbol, interval)
+CandleListener = Callable[[dict], Awaitable[None]]
 
 BINANCE_REST = "https://fapi.binance.com"
 RSI_PERIOD = 14
@@ -32,6 +34,8 @@ class BinanceStreamManager:
         self._tasks: dict[StreamKey, asyncio.Task] = {}
         # RSI 계산용 확정 종가 버퍼
         self._close_buffers: dict[StreamKey, list[float]] = {}
+        # 외부 캔들 리스너 (전략 엔진 등)
+        self._listeners: dict[StreamKey, set[CandleListener]] = {}
 
     async def subscribe(self, symbol: str, interval: str, websocket: WebSocket):
         key: StreamKey = (symbol.upper(), interval)
@@ -55,11 +59,38 @@ class BinanceStreamManager:
             self._subscribers[key].discard(websocket)
             logger.info(f"[구독 해제] {key} | 구독자: {len(self._subscribers[key])}")
 
-            if not self._subscribers[key]:
+            if not self._subscribers[key] and not self._listeners.get(key):
                 if key in self._tasks and not self._tasks[key].done():
                     self._tasks[key].cancel()
                     logger.info(f"[스트림 종료] {key}")
                 del self._subscribers[key]
+                self._tasks.pop(key, None)
+                self._close_buffers.pop(key, None)
+
+    async def add_listener(self, symbol: str, interval: str, listener: CandleListener):
+        """
+        외부 콜백을 등록한다 (전략 엔진용).
+        구독자가 없어도 스트림이 살아있도록 유지한다.
+        """
+        key: StreamKey = (symbol.upper(), interval)
+        self._listeners.setdefault(key, set()).add(listener)
+
+        if key not in self._tasks or self._tasks[key].done():
+            await self._seed_buffer(key)
+            self._tasks[key] = asyncio.create_task(self._run(key))
+            logger.info(f"[스트림 시작 - listener] {key}")
+        logger.info(f"[리스너 등록] {key} | 리스너: {len(self._listeners[key])}")
+
+    async def remove_listener(self, symbol: str, interval: str, listener: CandleListener):
+        key: StreamKey = (symbol.upper(), interval)
+        if key in self._listeners:
+            self._listeners[key].discard(listener)
+            logger.info(f"[리스너 해제] {key} | 리스너: {len(self._listeners[key])}")
+            if not self._listeners[key] and not self._subscribers.get(key):
+                if key in self._tasks and not self._tasks[key].done():
+                    self._tasks[key].cancel()
+                    logger.info(f"[스트림 종료 - listener] {key}")
+                self._listeners.pop(key, None)
                 self._tasks.pop(key, None)
                 self._close_buffers.pop(key, None)
 
@@ -140,9 +171,19 @@ class BinanceStreamManager:
             }
 
             await self._broadcast(key, message)
+            await self._notify_listeners(key, message)
 
         except Exception as e:
             logger.error(f"[파싱 오류] {key}: {e}")
+
+    async def _notify_listeners(self, key: StreamKey, message: dict):
+        """등록된 외부 리스너에게 캔들 메시지 전달 (실패해도 다른 리스너는 계속)"""
+        listeners = self._listeners.get(key, set()).copy()
+        for cb in listeners:
+            try:
+                await cb(message)
+            except Exception as e:
+                logger.error(f"[리스너 오류] {key}: {e}")
 
     async def _broadcast(self, key: StreamKey, data: dict):
         """구독자 전체에게 전송, 끊어진 연결 자동 제거"""

@@ -1,0 +1,10 @@
+{
+  "bot_running": true,
+  "last_entry_rsi": null,
+  "last_entry_price": null,
+  "pyramid_count": 0,
+  "tp_order_id": null,
+  "daily_entry_date": null,
+  "daily_entry_count": 0,
+  "last_processed_candle_time": null
+}

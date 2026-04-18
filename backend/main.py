@@ -11,13 +11,16 @@ import logging
 import httpx
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 from config import SYMBOLS, INTERVALS
 from exchange.stream import binance_stream
 from exchange.indicators import calculate_rsi_series
 from exchange import account
+from strategy import config as strategy_config, state as strategy_state, registry as strategy_registry
+from strategy.engine import engine as strategy_engine
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -29,6 +32,8 @@ BINANCE_REST = "https://fapi.binance.com"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("[앱 시작]")
+    # 서버 재시작 시 봇 상태가 ON이면 자동 복구
+    await strategy_engine.restore_if_running()
     yield
     logger.info("[앱 종료]")
 
@@ -120,6 +125,67 @@ def get_account_orders():
     except Exception as e:
         logger.error(f"[주문 조회 실패] {e}")
         return {"error": str(e)}
+
+
+# ----------------------------------------------------------------------------
+# 전략 관련 엔드포인트
+# ----------------------------------------------------------------------------
+
+
+class StrategySettingsBody(BaseModel):
+    active_strategy: str
+    common: dict
+    strategies: dict
+
+
+@app.get("/strategy/list")
+def get_strategy_list():
+    """등록된 전략 목록 + 각 전략의 파라미터 스키마"""
+    return strategy_registry.list_all()
+
+
+@app.get("/strategy/settings")
+def get_strategy_settings():
+    """현재 전략 설정"""
+    return strategy_config.load()
+
+
+@app.put("/strategy/settings")
+def put_strategy_settings(body: StrategySettingsBody):
+    """
+    설정 업데이트.
+    봇 ON 상태에서는 변경 불가 — 먼저 OFF 후 변경.
+    """
+    st = strategy_state.load()
+    if st["bot_running"]:
+        raise HTTPException(
+            status_code=409,
+            detail="봇이 켜진 상태에서는 설정을 변경할 수 없습니다. 먼저 봇을 끄세요.",
+        )
+    try:
+        return strategy_config.save(body.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/strategy/toggle")
+async def post_strategy_toggle():
+    """봇 ON/OFF 토글"""
+    st = strategy_state.load()
+    try:
+        if st["bot_running"]:
+            new_state = await strategy_engine.stop()
+        else:
+            new_state = await strategy_engine.start()
+        return new_state
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/strategy/state")
+def get_strategy_state():
+    """봇 런타임 상태"""
+    return strategy_state.load()
 
 
 @app.websocket("/ws/{symbol}/{interval}")

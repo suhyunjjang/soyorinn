@@ -9,6 +9,7 @@ import SymbolSelector from "./components/SymbolSelector";
 import IntervalSelector from "./components/IntervalSelector";
 import CandleChart from "./components/CandleChart";
 import AccountPanel from "./components/AccountPanel";
+import StrategyPanel from "./components/StrategyPanel";
 import { useCandleCountdown } from "./hooks/useCandleCountdown";
 
 export default function App() {
@@ -42,6 +43,12 @@ export default function App() {
           {symbol} · {interval} · 실시간 · 다음 봉까지 <span style={{ color: "#d1d4dc" }}>{countdown}</span>
         </div>
         <CandleChart symbol={symbol} interval={interval} />
+      </div>
+
+      {/* 전략 설정 / 봇 ON·OFF */}
+      <div style={{ background: "#131722", borderRadius: "8px", padding: "16px", marginBottom: "16px" }}>
+        <div style={{ marginBottom: "12px", fontSize: "13px", color: "#888", fontWeight: 500 }}>전략</div>
+        <StrategyPanel />
       </div>
 
       {/* 계정 정보 (잔고 / 포지션 / 오더) */}
