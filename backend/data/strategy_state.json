@@ -1,10 +1,10 @@
 {
   "bot_running": true,
-  "last_entry_rsi": null,
-  "last_entry_price": null,
+  "last_entry_rsi": 25.46,
+  "last_entry_price": 2307.63,
   "pyramid_count": 0,
-  "tp_order_id": null,
-  "daily_entry_date": null,
-  "daily_entry_count": 0,
-  "last_processed_candle_time": 1776582000
+  "tp_order_id": 8389766159847191528,
+  "daily_entry_date": "2026-04-19",
+  "daily_entry_count": 1,
+  "last_processed_candle_time": 1776619500
 }

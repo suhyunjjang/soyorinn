@@ -76,7 +76,11 @@ def load() -> dict:
             cfg["common"].setdefault(k, v)
         cfg.setdefault("strategies", {})
         for name in registry.names():
-            cfg["strategies"].setdefault(name, dict(registry.get(name).default_params))
+            defaults = dict(registry.get(name).default_params)
+            cfg["strategies"].setdefault(name, defaults)
+            # 새 파라미터가 추가된 경우 보강 (기존 값은 유지)
+            for k, v in defaults.items():
+                cfg["strategies"][name].setdefault(k, v)
         return cfg
 
 

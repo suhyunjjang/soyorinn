@@ -3,15 +3,16 @@
   "common": {
     "symbol": "ETHUSDT",
     "interval": "5m",
-    "capital_pct": 5,
-    "leverage": 10,
+    "capital_pct": 10,
+    "leverage": 7,
     "max_daily_entries": 5,
     "max_pyramid_count": 5
   },
   "strategies": {
     "rsi_long": {
       "rsi_threshold": 30,
-      "tp_roi_pct": 5
+      "tp_roi_pct": 5,
+      "pyramid_drop_pct": 2
     }
   }
 }

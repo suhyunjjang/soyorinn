@@ -163,12 +163,14 @@ class StrategyEngine:
                 logger.info("[한도] 피라미딩 최대 횟수 초과 — 신호 스킵")
                 should_execute = False
 
+        # _execute_signal은 같은 사이클 내에서 매수 + TP까지 처리한다.
+        # 직후 _ensure_tp를 또 호출하면 거래소 list 반영 지연으로 TP가 중복 발주된다.
+        # → 신호를 처리하지 않은 사이클에서만 ensure_tp 보장 호출
         if should_execute:
             await self._execute_signal(signal, candle, common, params, st, position)
-
-        # 신호 유무와 무관하게 TP 보장 (발주 실패/외부 취소/외부 매수 자동 복구)
-        latest_position = account.get_position(symbol)
-        await self._ensure_tp(symbol, latest_position, common, params, st)
+        else:
+            latest_position = account.get_position(symbol)
+            await self._ensure_tp(symbol, latest_position, common, params, st)
 
         state.save(st)
 
@@ -181,30 +183,24 @@ class StrategyEngine:
         st: dict,
     ):
         """
-        포지션 보유 중인데 활성 TP 주문이 실제로 없으면 자동으로 발주한다.
-        - state.tp_order_id에 의존하지 않고 거래소 오픈 오더를 진실로 사용
-        - TP 발주가 직전 사이클에서 실패했거나, 사용자가 수동 취소한 경우 복구
+        포지션 보유 중인데 활성 TP 주문이 없으면 자동으로 발주한다.
+
+        state.tp_order_id로 단건 조회(get_order)해 status가 NEW면 살아있다고 본다.
+        (list 조회는 발주 직후 반영 지연이 있을 수 있어 단건 조회가 더 안전.)
         """
         if position is None:
             return
 
-        try:
-            orders = account.get_open_orders()
-        except Exception as e:
-            logger.error(f"[ensure_tp] 오픈 오더 조회 실패: {e}")
-            return
-
-        tp_orders = [
-            o for o in orders
-            if o["symbol"] == symbol
-            and o["type"] == "TAKE_PROFIT_MARKET"
-            and o["side"] == "SELL"
-        ]
-
-        if tp_orders:
-            # 살아있는 TP 발견 → state ID만 동기화
-            st["tp_order_id"] = tp_orders[0]["order_id"]
-            return
+        tp_id = st.get("tp_order_id")
+        if tp_id:
+            try:
+                order = account.get_order(symbol, tp_id)
+            except Exception as e:
+                logger.error(f"[ensure_tp] 주문 조회 실패: {e}")
+                return
+            if order and order.get("status") == "NEW":
+                # TP 살아있음
+                return
 
         leverage = int(common["leverage"])
         tp_roi_pct = float(params["tp_roi_pct"])
@@ -220,7 +216,7 @@ class StrategyEngine:
         except BinanceAPIException as e:
             logger.error(
                 f"[ensure_tp 실패 - Binance] code={e.code} msg={e.message} | "
-                f"symbol={symbol} qty={position['quantity']} stop={tp_price} avg_entry={avg_entry}"
+                f"symbol={symbol} qty={position['quantity']} price={tp_price} avg_entry={avg_entry}"
             )
         except Exception as e:
             logger.error(f"[ensure_tp 실패] {e}")
@@ -291,13 +287,13 @@ class StrategyEngine:
         except BinanceAPIException as e:
             logger.error(
                 f"[TP 주문 실패 - Binance] code={e.code} msg={e.message} | "
-                f"symbol={symbol} qty={new_position['quantity']} stop={tp_price} "
+                f"symbol={symbol} qty={new_position['quantity']} price={tp_price} "
                 f"avg_entry={avg_entry} lev={leverage}"
             )
         except Exception as e:
             logger.error(
                 f"[TP 주문 실패] {e} | "
-                f"symbol={symbol} qty={new_position['quantity']} stop={tp_price}"
+                f"symbol={symbol} qty={new_position['quantity']} price={tp_price}"
             )
 
         # state 업데이트

@@ -126,6 +126,9 @@ def get_open_orders() -> list[dict]:
     ]
     """
     client = get_client()
+    # 주의: /fapi/v1/openOrders는 basic 주문만 반환한다.
+    # trigger 주문(STOP_MARKET, TAKE_PROFIT_MARKET 등)은 Conditional로 분류되어
+    # 여기에 안 잡히므로, 봇 내부에서는 단건 조회(get_order)를 사용한다.
     orders = client.futures_get_open_orders()
 
     return [
@@ -248,27 +251,43 @@ def market_buy(symbol: str, quantity: float) -> dict:
     )
 
 
-def place_take_profit_long(symbol: str, quantity: float, stop_price: float) -> dict:
+def place_take_profit_long(symbol: str, quantity: float, price: float) -> dict:
     """
-    LONG 포지션용 TAKE_PROFIT_MARKET 주문 (reduceOnly).
-    가격이 stop_price에 닿으면 시장가로 청산.
+    LONG 포지션용 지정가 청산 주문 (LIMIT SELL, reduceOnly).
+    가격이 price에 도달하면 지정가로 체결된다.
+    basic openOrders에 잡혀 거래소/대시보드 UI에 바로 보인다.
     """
     client = get_client()
     filters = get_symbol_filters(symbol)
     qty = _quantize_down(quantity, filters["step_size"], filters["quantity_precision"])
-    sp = _quantize_down(stop_price, filters["tick_size"], filters["price_precision"])
+    px = _quantize_down(price, filters["tick_size"], filters["price_precision"])
 
-    logger.info(f"[TP 주문] {symbol} qty={qty} stop={sp}")
+    logger.info(f"[TP 지정가] {symbol} qty={qty} price={px}")
     # reduceOnly는 일부 환경에서 boolean이 거부되어 lowercase 문자열로 전송
     return client.futures_create_order(
         symbol=symbol.upper(),
         side="SELL",
-        type="TAKE_PROFIT_MARKET",
+        type="LIMIT",
+        timeInForce="GTC",
         quantity=qty,
-        stopPrice=sp,
+        price=px,
         reduceOnly="true",
-        workingType="MARK_PRICE",
     )
+
+
+def get_order(symbol: str, order_id: int) -> dict | None:
+    """
+    단일 주문 상세 조회 (basic/conditional 구분 없이 모두 조회됨).
+    바이낸스가 trigger 주문을 Conditional로 분리하면서 list 조회는 신뢰 불가.
+    상태 확인은 항상 이 단건 조회로.
+    """
+    client = get_client()
+    try:
+        return client.futures_get_order(symbol=symbol.upper(), orderId=order_id)
+    except BinanceAPIException as e:
+        if e.code == -2013:  # Order does not exist
+            return None
+        raise
 
 
 def cancel_order(symbol: str, order_id: int) -> dict | None:
