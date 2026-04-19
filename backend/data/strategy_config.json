@@ -2,16 +2,16 @@
   "active_strategy": "rsi_long",
   "common": {
     "symbol": "ETHUSDT",
-    "interval": "15m",
-    "capital_pct": 10.0,
-    "leverage": 7,
+    "interval": "5m",
+    "capital_pct": 5,
+    "leverage": 10,
     "max_daily_entries": 5,
     "max_pyramid_count": 5
   },
   "strategies": {
     "rsi_long": {
       "rsi_threshold": 30,
-      "tp_roi_pct": 5.0
+      "tp_roi_pct": 5
     }
   }
 }

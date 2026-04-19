@@ -92,15 +92,17 @@ def get_positions() -> list[dict]:
         amt = float(p["positionAmt"])
         if amt == 0:
             continue
+        # 바이낸스 V3 positionRisk는 leverage / liquidationPrice / markPrice가
+        # 누락될 수 있어 안전 처리. 빈 문자열도 0으로 캐스팅.
         result.append({
             "symbol": p["symbol"],
             "side": "LONG" if amt > 0 else "SHORT",
             "quantity": abs(amt),
-            "entry_price": float(p["entryPrice"]),
-            "mark_price": float(p["markPrice"]),
-            "unrealized_pnl": float(p["unRealizedProfit"]),
-            "leverage": int(p["leverage"]),
-            "liquidation_price": float(p["liquidationPrice"]),
+            "entry_price": float(p.get("entryPrice") or 0),
+            "mark_price": float(p.get("markPrice") or 0),
+            "unrealized_pnl": float(p.get("unRealizedProfit") or 0),
+            "leverage": int(float(p.get("leverage") or 0)),
+            "liquidation_price": float(p.get("liquidationPrice") or 0),
         })
     return result
 
@@ -257,13 +259,14 @@ def place_take_profit_long(symbol: str, quantity: float, stop_price: float) -> d
     sp = _quantize_down(stop_price, filters["tick_size"], filters["price_precision"])
 
     logger.info(f"[TP 주문] {symbol} qty={qty} stop={sp}")
+    # reduceOnly는 일부 환경에서 boolean이 거부되어 lowercase 문자열로 전송
     return client.futures_create_order(
         symbol=symbol.upper(),
         side="SELL",
         type="TAKE_PROFIT_MARKET",
         quantity=qty,
         stopPrice=sp,
-        reduceOnly=True,
+        reduceOnly="true",
         workingType="MARK_PRICE",
     )
 

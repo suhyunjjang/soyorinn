@@ -16,6 +16,8 @@
 import asyncio
 import logging
 
+from binance.exceptions import BinanceAPIException
+
 from exchange import account
 from exchange.stream import binance_stream
 from strategy import config, state, registry
@@ -151,25 +153,77 @@ class StrategyEngine:
         # 봉 처리 시간 갱신 (신호 유무와 무관)
         st["last_processed_candle_time"] = candle_time
 
-        if signal is None:
-            state.save(st)
-            return
-
-        # 안전장치: 일일 진입 한도
-        if state.daily_entry_count_today(st) >= int(common["max_daily_entries"]):
-            logger.info(f"[한도] 일일 최대 진입 횟수 초과 — 신호 스킵")
-            state.save(st)
-            return
-
-        # 안전장치: 피라미딩 한도 (ADD일 때)
-        if signal.type == "ADD":
-            if st.get("pyramid_count", 0) >= int(common["max_pyramid_count"]):
+        # 안전장치 통과 여부 판정
+        should_execute = signal is not None
+        if should_execute:
+            if state.daily_entry_count_today(st) >= int(common["max_daily_entries"]):
+                logger.info("[한도] 일일 최대 진입 횟수 초과 — 신호 스킵")
+                should_execute = False
+            elif signal.type == "ADD" and st.get("pyramid_count", 0) >= int(common["max_pyramid_count"]):
                 logger.info("[한도] 피라미딩 최대 횟수 초과 — 신호 스킵")
-                state.save(st)
-                return
+                should_execute = False
 
-        await self._execute_signal(signal, candle, common, params, st, position)
+        if should_execute:
+            await self._execute_signal(signal, candle, common, params, st, position)
+
+        # 신호 유무와 무관하게 TP 보장 (발주 실패/외부 취소/외부 매수 자동 복구)
+        latest_position = account.get_position(symbol)
+        await self._ensure_tp(symbol, latest_position, common, params, st)
+
         state.save(st)
+
+    async def _ensure_tp(
+        self,
+        symbol: str,
+        position: dict | None,
+        common: dict,
+        params: dict,
+        st: dict,
+    ):
+        """
+        포지션 보유 중인데 활성 TP 주문이 실제로 없으면 자동으로 발주한다.
+        - state.tp_order_id에 의존하지 않고 거래소 오픈 오더를 진실로 사용
+        - TP 발주가 직전 사이클에서 실패했거나, 사용자가 수동 취소한 경우 복구
+        """
+        if position is None:
+            return
+
+        try:
+            orders = account.get_open_orders()
+        except Exception as e:
+            logger.error(f"[ensure_tp] 오픈 오더 조회 실패: {e}")
+            return
+
+        tp_orders = [
+            o for o in orders
+            if o["symbol"] == symbol
+            and o["type"] == "TAKE_PROFIT_MARKET"
+            and o["side"] == "SELL"
+        ]
+
+        if tp_orders:
+            # 살아있는 TP 발견 → state ID만 동기화
+            st["tp_order_id"] = tp_orders[0]["order_id"]
+            return
+
+        leverage = int(common["leverage"])
+        tp_roi_pct = float(params["tp_roi_pct"])
+        avg_entry = position["entry_price"]
+        tp_price = avg_entry * (1.0 + (tp_roi_pct / leverage / 100.0))
+
+        logger.warning(
+            f"[ensure_tp] 활성 TP 없음 → 재발주: avg={avg_entry} tp={tp_price} qty={position['quantity']}"
+        )
+        try:
+            tp = account.place_take_profit_long(symbol, position["quantity"], tp_price)
+            st["tp_order_id"] = tp.get("orderId")
+        except BinanceAPIException as e:
+            logger.error(
+                f"[ensure_tp 실패 - Binance] code={e.code} msg={e.message} | "
+                f"symbol={symbol} qty={position['quantity']} stop={tp_price} avg_entry={avg_entry}"
+            )
+        except Exception as e:
+            logger.error(f"[ensure_tp 실패] {e}")
 
     async def _execute_signal(
         self,
@@ -234,8 +288,17 @@ class StrategyEngine:
                 symbol, new_position["quantity"], tp_price
             )
             st["tp_order_id"] = tp.get("orderId")
+        except BinanceAPIException as e:
+            logger.error(
+                f"[TP 주문 실패 - Binance] code={e.code} msg={e.message} | "
+                f"symbol={symbol} qty={new_position['quantity']} stop={tp_price} "
+                f"avg_entry={avg_entry} lev={leverage}"
+            )
         except Exception as e:
-            logger.error(f"[TP 주문 실패] {e} — 포지션은 보유 중, 수동 확인 필요")
+            logger.error(
+                f"[TP 주문 실패] {e} | "
+                f"symbol={symbol} qty={new_position['quantity']} stop={tp_price}"
+            )
 
         # state 업데이트
         st["last_entry_rsi"] = signal.context["rsi"]
