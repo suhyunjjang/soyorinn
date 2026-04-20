@@ -18,6 +18,7 @@ import {
 import type {
   IChartApi,
   ISeriesApi,
+  IPriceLine,
   CandlestickData,
   HistogramData,
   SingleValueData,
@@ -25,6 +26,7 @@ import type {
 } from "lightweight-charts";
 import { useWebSocket } from "../hooks/useWebSocket";
 import type { WsUpdate } from "../hooks/useWebSocket";
+import type { Position, OpenOrder } from "../hooks/useAccount";
 
 const API_BASE = "http://localhost:8000";
 
@@ -47,9 +49,11 @@ interface KlineRow {
 interface Props {
   symbol: string;
   interval: string;
+  positions: Position[];
+  orders: OpenOrder[];
 }
 
-export default function CandleChart({ symbol, interval }: Props) {
+export default function CandleChart({ symbol, interval, positions, orders }: Props) {
   const chartDivRef     = useRef<HTMLDivElement>(null);
   const chartRef        = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -171,6 +175,54 @@ export default function CandleChart({ symbol, interval }: Props) {
       chartRef.current = null;
     };
   }, [symbol, interval]);
+
+  // 보유 포지션 진입가 + 오픈 오더 가격을 차트에 가로 라인으로 표시.
+  // 5초마다 폴링되는 positions/orders가 갱신되면 라인을 다시 그린다.
+  useEffect(() => {
+    const series = candleSeriesRef.current;
+    if (!series) return;
+
+    const lines: IPriceLine[] = [];
+
+    positions
+      .filter((p) => p.symbol === symbol)
+      .forEach((p) => {
+        lines.push(
+          series.createPriceLine({
+            price: p.entry_price,
+            color: "#f0b90b",
+            lineWidth: 1,
+            lineStyle: LineStyle.Solid,
+            axisLabelVisible: true,
+            title: `진입`,
+          })
+        );
+      });
+
+    orders
+      .filter((o) => o.symbol === symbol)
+      .forEach((o) => {
+        const price = o.price > 0 ? o.price : o.stop_price;
+        if (price <= 0) return;
+        const isSell = o.side === "SELL";
+        lines.push(
+          series.createPriceLine({
+            price,
+            color: isSell ? "#26a69a" : "#ef5350",
+            lineWidth: 1,
+            lineStyle: LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: isSell ? "TP" : o.type,
+          })
+        );
+      });
+
+    return () => {
+      lines.forEach((line) => {
+        try { series.removePriceLine(line); } catch { /* series 이미 제거됨 */ }
+      });
+    };
+  }, [positions, orders, symbol]);
 
   const handleUpdate = useCallback(({ candle, rsi }: WsUpdate) => {
     if (!candleSeriesRef.current) return;

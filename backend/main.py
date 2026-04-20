@@ -184,8 +184,27 @@ async def post_strategy_toggle():
 
 @app.get("/strategy/state")
 def get_strategy_state():
-    """봇 런타임 상태"""
-    return strategy_state.load()
+    """
+    봇 런타임 상태.
+
+    호출 시점에 보유 포지션이 사라졌으면 진입 정보(last_entry_*, pyramid_count, tp_order_id)
+    를 즉시 초기화한다. 봉 마감 콜백을 기다리지 않고 UI에 깔끔한 상태가 바로 반영되도록.
+    """
+    st = strategy_state.load()
+    if st.get("last_entry_price") is not None:
+        cfg = strategy_config.load()
+        symbol = cfg["common"]["symbol"]
+        try:
+            position = account.get_position(symbol)
+        except Exception as e:
+            logger.error(f"[state 검증 - 포지션 조회 실패] {e}")
+            position = None  # 조회 실패 시 보수적으로 리셋 안 함
+            return st
+        if position is None:
+            logger.info("[state 검증] 포지션 없음 → 진입 상태 즉시 리셋")
+            strategy_state.reset_position_state(st)
+            strategy_state.save(st)
+    return st
 
 
 @app.websocket("/ws/{symbol}/{interval}")

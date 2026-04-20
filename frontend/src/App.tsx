@@ -11,11 +11,13 @@ import CandleChart from "./components/CandleChart";
 import AccountPanel from "./components/AccountPanel";
 import StrategyPanel from "./components/StrategyPanel";
 import { useCandleCountdown } from "./hooks/useCandleCountdown";
+import { useAccount } from "./hooks/useAccount";
 
 export default function App() {
   const [symbol, setSymbol] = useState("ETHUSDT");
   const [interval, setInterval] = useState("5m");
   const countdown = useCandleCountdown(interval);
+  const { balance, positions, orders } = useAccount();
 
   return (
     <div style={{
@@ -42,7 +44,12 @@ export default function App() {
         <div style={{ marginBottom: "8px", fontSize: "13px", color: "#666" }}>
           {symbol} · {interval} · 실시간 · 다음 봉까지 <span style={{ color: "#d1d4dc" }}>{countdown}</span>
         </div>
-        <CandleChart symbol={symbol} interval={interval} />
+        <CandleChart
+          symbol={symbol}
+          interval={interval}
+          positions={positions}
+          orders={orders}
+        />
       </div>
 
       {/* 전략 설정 / 봇 ON·OFF */}
@@ -52,7 +59,7 @@ export default function App() {
       </div>
 
       {/* 계정 정보 (잔고 / 포지션 / 오더) */}
-      <AccountPanel />
+      <AccountPanel balance={balance} positions={positions} orders={orders} />
     </div>
   );
 }

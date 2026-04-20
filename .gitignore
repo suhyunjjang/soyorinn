@@ -38,3 +38,7 @@ npm-debug.log*
 .pytest_cache/
 .coverage
 htmlcov/
+
+# 봇 런타임 데이터 (개인 설정 / 상태)
+backend/data/strategy_config.json
+backend/data/strategy_state.json

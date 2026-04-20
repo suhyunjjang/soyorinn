@@ -4,13 +4,18 @@
  * - useAccount 훅으로 5초마다 자동 갱신
  */
 
-import { useAccount } from "../hooks/useAccount";
+import type { Balance, Position, OpenOrder } from "../hooks/useAccount";
 import BalancePanel from "./BalancePanel";
 import PositionsTable from "./PositionsTable";
 import OrdersTable from "./OrdersTable";
 
-export default function AccountPanel() {
-  const { balance, positions, orders } = useAccount();
+interface Props {
+  balance: Balance | null;
+  positions: Position[];
+  orders: OpenOrder[];
+}
+
+export default function AccountPanel({ balance, positions, orders }: Props) {
 
   return (
     <div style={{ display: "grid", gap: "16px" }}>
