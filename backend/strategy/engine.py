@@ -153,13 +153,15 @@ class StrategyEngine:
         # 봉 처리 시간 갱신 (신호 유무와 무관)
         st["last_processed_candle_time"] = candle_time
 
+        # 봉 마감 요약 로그 (매 봉마다 RSI·포지션·신호 기록)
+        pos_summary = f"평단={position['entry_price']} qty={position['quantity']}" if position else "없음"
+        signal_summary = signal.type if signal else "없음"
+        logger.info(f"[봉 마감 {interval}] rsi={candle.rsi} pos={pos_summary} signal={signal_summary}")
+
         # 안전장치 통과 여부 판정
         should_execute = signal is not None
         if should_execute:
-            if state.daily_entry_count_today(st) >= int(common["max_daily_entries"]):
-                logger.info("[한도] 일일 최대 진입 횟수 초과 — 신호 스킵")
-                should_execute = False
-            elif signal.type == "ADD" and st.get("pyramid_count", 0) >= int(common["max_pyramid_count"]):
+            if signal.type == "ADD" and st.get("pyramid_count", 0) >= int(common["max_pyramid_count"]):
                 logger.info("[한도] 피라미딩 최대 횟수 초과 — 신호 스킵")
                 should_execute = False
 
@@ -303,7 +305,6 @@ class StrategyEngine:
             st["pyramid_count"] = 0
         else:
             st["pyramid_count"] = st.get("pyramid_count", 0) + 1
-        state.bump_daily_entry(st)
 
 
 engine = StrategyEngine()

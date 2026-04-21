@@ -8,6 +8,8 @@ FastAPI 메인 앱
 """
 
 import logging
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 import httpx
 from contextlib import asynccontextmanager
 
@@ -22,7 +24,25 @@ from exchange import account
 from strategy import config as strategy_config, state as strategy_state, registry as strategy_registry
 from strategy.engine import engine as strategy_engine
 
-logging.basicConfig(level=logging.INFO)
+# 로그를 콘솔 + 파일 양쪽에 저장 (10MB × 5개 회전).
+# uvicorn 접근 로그(200 OK 등)는 WARNING으로 올려 잡음 제거.
+LOG_DIR = Path(__file__).parent / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+_log_format = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+_formatter = logging.Formatter(_log_format)
+
+_file_handler = RotatingFileHandler(
+    LOG_DIR / "bot.log", maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"
+)
+_file_handler.setFormatter(_formatter)
+
+_console_handler = logging.StreamHandler()
+_console_handler.setFormatter(_formatter)
+
+logging.basicConfig(level=logging.INFO, handlers=[_console_handler, _file_handler])
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 # 바이낸스 선물 REST API 베이스 URL

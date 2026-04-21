@@ -161,14 +161,6 @@ export default function StrategyPanel() {
             onChange={(v) => setCommon("leverage", Math.round(v))}
           />
         </Field>
-        <Field label="일일 최대 진입">
-          <NumInput
-            disabled={disabled}
-            value={draft.common.max_daily_entries}
-            min={1} max={100} step={1}
-            onChange={(v) => setCommon("max_daily_entries", Math.round(v))}
-          />
-        </Field>
         <Field label="피라미딩 최대 횟수">
           <NumInput
             disabled={disabled}
@@ -228,7 +220,6 @@ export default function StrategyPanel() {
         <Stat label="마지막 진입 RSI" value={state?.last_entry_rsi ?? "-"} />
         <Stat label="마지막 진입 가격" value={state?.last_entry_price ?? "-"} />
         <Stat label="피라미딩 카운트" value={state?.pyramid_count ?? 0} />
-        <Stat label="오늘 진입 횟수" value={state?.daily_entry_count ?? 0} />
         <Stat label="활성 TP 주문 ID" value={state?.tp_order_id ?? "-"} />
       </SubSection>
     </div>

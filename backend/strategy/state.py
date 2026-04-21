@@ -10,7 +10,6 @@
 
 import json
 import logging
-from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
 
@@ -24,8 +23,6 @@ _DEFAULT_STATE = {
     "last_entry_price": None,
     "pyramid_count": 0,
     "tp_order_id": None,
-    "daily_entry_date": None,   # "YYYY-MM-DD" (UTC)
-    "daily_entry_count": 0,
     "last_processed_candle_time": None,  # 마지막으로 처리한 봉의 open time (sec)
 }
 
@@ -64,23 +61,6 @@ def reset_position_state(state: dict) -> dict:
     state["tp_order_id"] = None
     return state
 
-
-def bump_daily_entry(state: dict) -> dict:
-    """일일 진입 카운터 +1 (날짜가 바뀌면 리셋)"""
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    if state.get("daily_entry_date") != today:
-        state["daily_entry_date"] = today
-        state["daily_entry_count"] = 0
-    state["daily_entry_count"] += 1
-    return state
-
-
-def daily_entry_count_today(state: dict) -> int:
-    """오늘(UTC) 진입 횟수"""
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    if state.get("daily_entry_date") != today:
-        return 0
-    return state.get("daily_entry_count", 0)
 
 
 def _write(state: dict):

@@ -34,7 +34,6 @@ DEFAULT_COMMON = {
     "interval": "15m",
     "capital_pct": 10.0,
     "leverage": 7,
-    "max_daily_entries": 5,
     "max_pyramid_count": 5,
 }
 
